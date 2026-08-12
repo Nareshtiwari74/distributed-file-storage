@@ -1,0 +1,53 @@
+name: dfs
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dfs-postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-dfs}
+      POSTGRES_USER: ${DB_USERNAME:-dfs}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-dfs}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-dfs} -d ${DB_NAME:-dfs}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  backend:
+    build: .
+    container_name: dfs-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-dfs}
+      DB_USERNAME: ${DB_USERNAME:-dfs}
+      DB_PASSWORD: ${DB_PASSWORD:-dfs}
+      SERVER_PORT: 8080
+      JAVA_OPTS: "-Xms128m -Xmx256m"
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+volumes:
+  pgdata:
