@@ -6,3 +6,6 @@ target/
 .idea/
 *.iml
 .vscode/
+.env.backup
+.env.backup
+.env*
