@@ -10,10 +10,13 @@ spring:
       pool-name: dfs-hikari-pool
       maximum-pool-size: ${DB_POOL_SIZE:10}
       connection-timeout: 10000
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: none
+      ddl-auto: validate
     properties:
       hibernate:
         jdbc:
@@ -53,3 +56,7 @@ logging:
   level:
     root: INFO
     com.dfs: DEBUG
+
+jwt:
+  secret: ${JWT_SECRET:change-this-in-prod-to-a-long-random-value-at-least-32-bytes}
+  expiration-ms: ${JWT_EXPIRATION_MS:86400000}

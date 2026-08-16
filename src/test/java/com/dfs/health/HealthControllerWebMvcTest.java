@@ -1,10 +1,14 @@
 package com.dfs.health;
 
+import com.dfs.auth.JwtAuthenticationFilter;
+import com.dfs.auth.JwtService;
+import com.dfs.config.SecurityConfig;
 import com.dfs.health.dto.HealthResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
@@ -16,6 +20,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(HealthController.class)
+@Import({SecurityConfig.class, JwtAuthenticationFilter.class})
 class HealthControllerWebMvcTest {
 
     @Autowired
@@ -23,6 +28,9 @@ class HealthControllerWebMvcTest {
 
     @MockBean
     private HealthService healthService;
+
+    @MockBean
+    private JwtService jwtService;
 
     @Test
     void returns200AndUpBodyWhenHealthy() throws Exception {
