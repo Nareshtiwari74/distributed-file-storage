@@ -2,7 +2,7 @@ spring:
   application:
     name: distributed-file-storage
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dfs}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:dfs}}
     username: ${DB_USERNAME:dfs}
     password: ${DB_PASSWORD:dfs}
     driver-class-name: org.postgresql.Driver
