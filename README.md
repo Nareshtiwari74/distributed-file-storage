@@ -7,6 +7,14 @@ File **contents** are stored in object storage (MinIO); file **metadata** lives 
 > **Status:** Phases 1–3 complete (foundation, authentication, file storage). Multi-node replication, failover, and self-healing are on the roadmap.
 
 ---
+## 🔗 Live Demo
+
+**API base URL:** https://distributed-file-storage-b26g.onrender.com
+
+- Health check: [/api/health](https://distributed-file-storage-b26g.onrender.com/api/health)
+- API docs (Swagger): [/swagger-ui.html](https://distributed-file-storage-b26g.onrender.com/swagger-ui.html)
+
+> Deployed on Render's free tier (backend) + Neon (PostgreSQL). The first request after inactivity may take ~30–50s while the service wakes. Authentication and health are live; file storage runs locally with MinIO (cloud object storage integration in progress).
 
 ## What it does
 
