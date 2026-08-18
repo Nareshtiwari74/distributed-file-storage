@@ -2,25 +2,32 @@
 
 A fault-tolerant file storage backend built with **Spring Boot** and **Java 21** — a small, understandable take on what systems like Amazon S3 or Google Drive do under the hood: store files reliably so that no single machine failure loses data or makes it unavailable.
 
-File **contents** are stored in object storage (MinIO); file **metadata** lives in PostgreSQL. The system is built as a **modular monolith**, phase by phase, with automated tests and documentation at each step.
+File **contents** are stored in S3-compatible object storage (MinIO locally, Supabase in production); file **metadata** lives in PostgreSQL. The system is built as a **modular monolith**, phase by phase, with automated tests and documentation at each step.
 
-> **Status:** Phases 1–3 complete (foundation, authentication, file storage). Multi-node replication, failover, and self-healing are on the roadmap.
+> **Status:** Phases 1–3 complete and **deployed live** (foundation, authentication, file storage). Multi-node replication, failover, and self-healing are on the roadmap.
 
 ---
+
 ## 🔗 Live Demo
 
-**API base URL:** https://distributed-file-storage-b26g.onrender.com
+**Live API:** https://distributed-file-storage-b26g.onrender.com
 
-- Health check: [/api/health](https://distributed-file-storage-b26g.onrender.com/api/health)
+- Health: [/api/health](https://distributed-file-storage-b26g.onrender.com/api/health)
 - API docs (Swagger): [/swagger-ui.html](https://distributed-file-storage-b26g.onrender.com/swagger-ui.html)
 
-> Deployed on Render's free tier (backend) + Neon (PostgreSQL). The first request after inactivity may take ~30–50s while the service wakes. Authentication and health are live; file storage runs locally with MinIO (cloud object storage integration in progress).
+Fully deployed and functional — registration/login (JWT) and file upload, list, download, and delete, all live. Files are stored in cloud object storage.
+
+**Deployed stack:** Spring Boot on Render · PostgreSQL on Neon · S3-compatible object storage (Supabase)
+
+> Runs on free tiers. The first request after inactivity may take ~30–50s while the service wakes.
+
+---
 
 ## What it does
 
 An authenticated user can upload, list, download, and delete files through a REST API. Each file is:
 
-- Stored as bytes in **MinIO** (S3-compatible object storage)
+- Stored as bytes in **S3-compatible object storage**
 - Recorded as metadata in **PostgreSQL** (filename, size, type, owner, SHA-256 checksum, storage key)
 - Verified with a **SHA-256 checksum** for integrity
 - **Owned** by the uploading user — you can only access your own files
@@ -32,11 +39,12 @@ An authenticated user can upload, list, download, and delete files through a RES
 - **Language:** Java 21
 - **Framework:** Spring Boot 3.3.5 (Spring MVC, Spring Data JPA, Spring Security)
 - **Authentication:** JWT (jjwt), BCrypt password hashing
-- **Database:** PostgreSQL 16, schema managed with Flyway migrations
-- **Object storage:** MinIO (S3-compatible)
+- **Database:** PostgreSQL, schema managed with Flyway migrations
+- **Object storage:** S3-compatible (MinIO locally, Supabase in production) via AWS SDK
 - **API docs:** OpenAPI / Swagger UI
 - **Testing:** JUnit 5, Mockito, Testcontainers
 - **Build & infra:** Maven, Docker, Docker Compose
+- **Deployment:** Render (app), Neon (PostgreSQL), Supabase (object storage)
 
 ---
 
@@ -57,7 +65,7 @@ An authenticated user can upload, list, download, and delete files through a RES
 - Correct status codes: 201 register, 401 unauthenticated, 409 duplicate email
 
 **Phase 3 — File storage**
-- Upload files (bytes to MinIO, metadata to PostgreSQL)
+- Upload files (bytes to object storage, metadata to PostgreSQL)
 - SHA-256 checksum computed on upload
 - List, download, and delete your files
 - Per-user ownership enforced on every operation
@@ -77,7 +85,7 @@ An authenticated user can upload, list, download, and delete files through a RES
 | GET    | /api/files/{id}/download    | Yes   | Download one of your files         |
 | DELETE | /api/files/{id}             | Yes   | Delete one of your files           |
 
-Interactive docs: `http://localhost:8080/swagger-ui.html`
+Interactive docs: `/swagger-ui.html`
 
 ---
 
@@ -104,7 +112,7 @@ cd distributed-file-storage
 docker compose up -d postgres minio
 ```
 
-Defaults (no setup needed):
+Defaults (local development only — never used in production):
 - PostgreSQL: database `dfs`, user `dfs`, password `dfs`
 - MinIO: user `minioadmin`, password `minioadmin`
 
@@ -129,7 +137,7 @@ Expected: `{"status":"UP","components":{"database":"UP"}}`
 ## Full walkthrough — register, upload, download, delete
 
 ```bash
-# 1. Register (returns a JWT). Save the token.
+# 1. Register (returns a JWT)
 curl -X POST http://localhost:8080/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"email":"you@example.com","password":"password123"}'
@@ -197,3 +205,57 @@ Integration tests are tagged `integration` and run separately from the fast unit
 Modular monolith — one deployable, split internally by feature package (`auth`, `health`, `file`, `config`, `common`, `user`). Distribution lives in the storage layer, not in splitting the application into microservices.
 
 **How a file is stored:**
+Upload request (+ JWT)
+│
+▼
+JwtAuthenticationFilter → identifies the user from the token
+│
+▼
+FileController → FileService
+│ │
+│ ├──► StorageService (S3-compatible) → stores the file BYTES
+│ │
+│ └──► FileMetadataRepository → stores METADATA in PostgreSQL
+▼
+Returns file metadata (id, name, size, checksum)
+
+- **Metadata** (small, queryable) → PostgreSQL
+- **Bytes** (large, binary) → object storage
+- Linked by an `object_key` — the metadata row points to the object in storage
+
+The `StorageService` interface keeps the storage backend swappable — the same code runs against local MinIO in development and Supabase in production, and is ready for multi-node backends later.
+
+Database schema is versioned with Flyway migrations under `src/main/resources/db/migration`.
+
+---
+
+## Configuration
+
+All environment-specific settings are supplied via environment variables (with safe local defaults). Secrets are never committed.
+
+| Variable | Purpose |
+|----------|---------|
+| `SPRING_DATASOURCE_URL` / `USERNAME` / `PASSWORD` | PostgreSQL connection |
+| `JWT_SECRET` | Signing key for JWTs (long random value in production) |
+| `STORAGE_ENABLED` | Toggles the object-storage backend |
+| `MINIO_ENDPOINT` / `MINIO_USER` / `MINIO_PASSWORD` / `MINIO_BUCKET` / `MINIO_REGION` | S3-compatible storage connection |
+| `PORT` | Server port (set automatically by the host) |
+
+---
+
+## Roadmap
+
+- [x] **Phase 1** — Foundation (health, config, error handling, logging, Docker)
+- [x] **Phase 2** — Authentication (register, login, JWT, route protection)
+- [x] **Phase 3** — File upload / list / download / delete with S3-compatible storage + SHA-256
+- [x] **Deployment** — Live on Render + Neon + Supabase
+- [ ] **Phase 4** — Content deduplication (skip storing identical files twice)
+- [ ] **Phase 5** — Multi-node storage registry and health checks
+- [ ] **Phase 6** — File replication across nodes
+- [ ] **Phase 7** — Asynchronous replication (message queue)
+- [ ] **Phase 8** — Failure detection and download failover
+- [ ] **Phase 9** — Automatic re-replication (self-healing)
+- [ ] **Phase 10** — CI/CD, load testing, full documentation
+
+---
+
