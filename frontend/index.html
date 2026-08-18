@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Distributed File Storage</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f172a; color: #e2e8f0; min-height: 100vh; padding: 2rem 1rem;
+    }
+    .container { max-width: 640px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-bottom: 2rem; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; }
+    .card h2 { font-size: 1rem; margin-bottom: 1rem; color: #f1f5f9; }
+    input, button {
+      font-size: 0.9rem; padding: 0.6rem 0.8rem; border-radius: 8px; border: 1px solid #475569;
+    }
+    input { width: 100%; background: #0f172a; color: #e2e8f0; margin-bottom: 0.75rem; }
+    input:focus { outline: none; border-color: #3b82f6; }
+    button {
+      background: #3b82f6; color: white; border: none; cursor: pointer; font-weight: 500;
+    }
+    button:hover { background: #2563eb; }
+    button:disabled { background: #475569; cursor: not-allowed; }
+    button.secondary { background: #475569; }
+    button.secondary:hover { background: #64748b; }
+    button.danger { background: #dc2626; padding: 0.4rem 0.7rem; font-size: 0.8rem; }
+    button.danger:hover { background: #b91c1c; }
+    .row { display: flex; gap: 0.5rem; align-items: center; }
+    .row input { margin-bottom: 0; }
+    .file-item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 0.75rem; background: #0f172a; border-radius: 8px; margin-bottom: 0.5rem;
+    }
+    .file-name { font-weight: 500; }
+    .file-meta { color: #94a3b8; font-size: 0.75rem; }
+    .msg { padding: 0.6rem 0.8rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.85rem; }
+    .msg.error { background: #7f1d1d; color: #fecaca; }
+    .msg.success { background: #14532d; color: #bbf7d0; }
+    .logout { float: right; background: none; color: #94a3b8; border: none; font-size: 0.8rem; padding: 0; }
+    .logout:hover { color: #e2e8f0; background: none; }
+    .empty { color: #64748b; text-align: center; padding: 1rem; font-size: 0.875rem; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Point this at your live backend
+    const API = "https://distributed-file-storage-b26g.onrender.com";
+
+    function App() {
+      const [token, setToken] = useState(localStorage.getItem("token") || "");
+      const [email, setEmail] = useState("");
+      const [password, setPassword] = useState("");
+      const [showPassword, setShowPassword] = useState(false);
+      const [files, setFiles] = useState([]);
+      const [msg, setMsg] = useState(null);
+      const [busy, setBusy] = useState(false);
+
+      const show = (text, type = "error") => {
+        setMsg({ text, type });
+        setTimeout(() => setMsg(null), 4000);
+      };
+
+      function isValidEmail(value) {
+        // basic but solid: something@something.tld
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+      }
+
+      async function auth(path) {
+        if (!isValidEmail(email)) {
+          show("Please enter a valid email address (e.g. name@example.com)");
+          return;
+        }
+        if (password.length < 8) {
+          show("Password must be at least 8 characters");
+          return;
+        }
+        setBusy(true);
+        try {
+          const res = await fetch(`${API}/api/auth/${path}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password }),
+          });
+          const data = await res.json();
+          if (!res.ok) { show(data.message || "Failed"); return; }
+          setToken(data.token);
+          localStorage.setItem("token", data.token);
+          show(`${path === "register" ? "Registered" : "Logged in"} as ${data.email}`, "success");
+        } catch (e) { show("Network error — is the backend awake? (first request may take 30s)"); }
+        finally { setBusy(false); }
+      }
+
+      async function loadFiles() {
+        if (!token) return;
+        try {
+          const res = await fetch(`${API}/api/files`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (res.status === 401) { logout(); return; }
+          setFiles(await res.json());
+        } catch (e) { show("Could not load files"); }
+      }
+
+      async function upload(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        setBusy(true);
+        const form = new FormData();
+        form.append("file", file);
+        try {
+          const res = await fetch(`${API}/api/files`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+            body: form,
+          });
+          const data = await res.json();
+          if (!res.ok) { show(data.message || "Upload failed"); return; }
+          show(`Uploaded ${data.filename}`, "success");
+          loadFiles();
+        } catch (e) { show("Upload error"); }
+        finally { setBusy(false); e.target.value = ""; }
+      }
+
+      async function download(id, filename) {
+        const res = await fetch(`${API}/api/files/${id}/download`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = filename; a.click();
+        URL.revokeObjectURL(url);
+      }
+
+      async function del(id) {
+        const res = await fetch(`${API}/api/files/${id}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) { show("Deleted", "success"); loadFiles(); }
+        else show("Delete failed");
+      }
+
+      function logout() {
+        setToken(""); localStorage.removeItem("token"); setFiles([]);
+      }
+
+      useEffect(() => { loadFiles(); }, [token]);
+
+      return (
+        <div className="container">
+          <h1>Distributed File Storage</h1>
+          <p className="subtitle">Upload, store, and retrieve files — backed by cloud object storage.</p>
+
+          {msg && <div className={`msg ${msg.type}`}>{msg.text}</div>}
+
+          {!token ? (
+            <div className="card">
+              <h2>Sign in / Register</h2>
+              <input type="email" placeholder="Email" value={email}
+                onChange={(e) => setEmail(e.target.value)} />
+              <div className="row" style={{ marginBottom: "0.75rem" }}>
+                <input type={showPassword ? "text" : "password"} placeholder="Password (min 8 chars)"
+                  value={password} onChange={(e) => setPassword(e.target.value)} />
+                <button type="button" className="secondary"
+                  onClick={() => setShowPassword(!showPassword)}
+                  style={{ whiteSpace: "nowrap" }}>
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+              <div className="row">
+                <button onClick={() => auth("login")} disabled={busy}>Login</button>
+                <button className="secondary" onClick={() => auth("register")} disabled={busy}>Register</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="card">
+                <button className="logout" onClick={logout}>Logout</button>
+                <h2>Upload a file</h2>
+                <input type="file" onChange={upload} disabled={busy} />
+              </div>
+
+              <div className="card">
+                <h2>My files</h2>
+                {files.length === 0 ? (
+                  <p className="empty">No files yet — upload one above.</p>
+                ) : (
+                  files.map((f) => (
+                    <div className="file-item" key={f.id}>
+                      <div>
+                        <div className="file-name">{f.filename}</div>
+                        <div className="file-meta">{f.size} bytes · {f.contentType}</div>
+                      </div>
+                      <div className="row">
+                        <button className="secondary" onClick={() => download(f.id, f.filename)}>Download</button>
+                        <button className="danger" onClick={() => del(f.id)}>Delete</button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
