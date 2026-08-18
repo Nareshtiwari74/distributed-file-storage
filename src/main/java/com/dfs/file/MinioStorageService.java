@@ -34,10 +34,12 @@ public class MinioStorageService implements StorageService {
             @Value("${minio.endpoint}") String endpoint,
             @Value("${minio.access-key}") String accessKey,
             @Value("${minio.secret-key}") String secretKey,
-            @Value("${minio.bucket}") String bucket) {
+            @Value("${minio.bucket}") String bucket,
+            @Value("${minio.region:us-east-1}") String region) {
         this.client = MinioClient.builder()
                 .endpoint(endpoint)
                 .credentials(accessKey, secretKey)
+                .region(region)
                 .build();
         this.bucket = bucket;
     }
@@ -48,8 +50,9 @@ public class MinioStorageService implements StorageService {
             boolean exists = client.bucketExists(
                     BucketExistsArgs.builder().bucket(bucket).build());
             if (!exists) {
-                client.makeBucket(MakeBucketArgs.builder().bucket(bucket).build());
-                log.info("Created MinIO bucket '{}'", bucket);
+                log.warn("Bucket '{}' not found; assuming it is managed externally", bucket);
+            } else {
+                log.info("Using existing bucket '{}'", bucket);
             }
         } catch (Exception e) {
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR,
