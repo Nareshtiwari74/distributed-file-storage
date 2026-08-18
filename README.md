@@ -1,50 +1,70 @@
 # Distributed File Storage System
 
-A fault-tolerant file storage backend built with **Spring Boot** and **Java 21** — a small, understandable take on what systems like Amazon S3 or Google Drive do under the hood: store files reliably so that no single machine failure loses data or makes it unavailable.
+A full-stack, fault-tolerant file storage application built with **Spring Boot** and **Java 21**, with a **React** frontend — a small, understandable take on what systems like Amazon S3 or Google Drive do under the hood: store files reliably so that no single machine failure loses data or makes it unavailable.
 
-File **contents** are stored in S3-compatible object storage (MinIO locally, Supabase in production); file **metadata** lives in PostgreSQL. The system is built as a **modular monolith**, phase by phase, with automated tests and documentation at each step.
+File **contents** are stored in S3-compatible object storage (MinIO locally, Supabase in production); file **metadata** lives in PostgreSQL. The backend is a **modular monolith**, built phase by phase with automated tests and documentation at each step.
 
-> **Status:** Phases 1–3 complete and **deployed live** (foundation, authentication, file storage). Multi-node replication, failover, and self-healing are on the roadmap.
+> **Status:** Phases 1–3 complete, with a live frontend, and **fully deployed** (foundation, authentication, file storage). Multi-node replication, failover, and self-healing are on the roadmap.
 
 ---
 
 ## 🔗 Live Demo
 
-**Live API:** https://distributed-file-storage-b26g.onrender.com
+**Web app (frontend):** https://distributed-file-storage-two.vercel.app
+**API:** https://distributed-file-storage-b26g.onrender.com
 
 - Health: [/api/health](https://distributed-file-storage-b26g.onrender.com/api/health)
 - API docs (Swagger): [/swagger-ui.html](https://distributed-file-storage-b26g.onrender.com/swagger-ui.html)
 
-Fully deployed and functional — registration/login (JWT) and file upload, list, download, and delete, all live. Files are stored in cloud object storage.
+Fully deployed and functional — register/login (JWT) and file upload, list, download, and delete, all live through the web app or the API directly. Files are stored in cloud object storage.
 
-**Deployed stack:** Spring Boot on Render · PostgreSQL on Neon · S3-compatible object storage (Supabase)
+**Deployed stack:** React on Vercel · Spring Boot on Render · PostgreSQL on Neon · S3-compatible object storage (Supabase)
 
-> Runs on free tiers. The first request after inactivity may take ~30–50s while the service wakes.
+> Runs on free tiers. The first request after inactivity may take ~30–50s while the backend wakes.
 
 ---
 
 ## What it does
 
-An authenticated user can upload, list, download, and delete files through a REST API. Each file is:
+A registered user can upload, list, download, and delete files — through a simple web interface or the REST API. Each file is:
 
 - Stored as bytes in **S3-compatible object storage**
 - Recorded as metadata in **PostgreSQL** (filename, size, type, owner, SHA-256 checksum, storage key)
 - Verified with a **SHA-256 checksum** for integrity
 - **Owned** by the uploading user — you can only access your own files
 
+**Limits:** up to **10 MB per file**, any file type. Total storage is bounded by the free-tier quota (~1 GB). Oversized uploads are rejected with a clear `413` response.
+
 ---
 
 ## Tech stack
 
+**Backend**
 - **Language:** Java 21
 - **Framework:** Spring Boot 3.3.5 (Spring MVC, Spring Data JPA, Spring Security)
 - **Authentication:** JWT (jjwt), BCrypt password hashing
 - **Database:** PostgreSQL, schema managed with Flyway migrations
-- **Object storage:** S3-compatible (MinIO locally, Supabase in production) via AWS SDK
+- **Object storage:** S3-compatible (MinIO locally, Supabase in production) via the AWS SDK
 - **API docs:** OpenAPI / Swagger UI
 - **Testing:** JUnit 5, Mockito, Testcontainers
 - **Build & infra:** Maven, Docker, Docker Compose
-- **Deployment:** Render (app), Neon (PostgreSQL), Supabase (object storage)
+
+**Frontend**
+- **React** (single-page app) with fetch-based API integration and JWT auth
+- Client-side email/password validation, show-password toggle
+
+**Deployment**
+- Frontend on **Vercel** · Backend on **Render** · Database on **Neon** · Object storage on **Supabase**
+
+---
+
+## Repository structure
+distributed-file-storage/
+├── src/ # Spring Boot backend (Java)
+├── frontend/ # React web app
+├── pom.xml # backend build
+├── docker-compose.yml # local Postgres + MinIO
+└── README.md
 
 ---
 
@@ -69,7 +89,12 @@ An authenticated user can upload, list, download, and delete files through a RES
 - SHA-256 checksum computed on upload
 - List, download, and delete your files
 - Per-user ownership enforced on every operation
+- 10 MB upload limit with a clean error for oversized files
 - Storage abstracted behind an interface (ready for multi-node backends)
+
+**Frontend + Deployment**
+- React web app: login/register, upload, file list, download, delete
+- Full stack deployed live (Vercel + Render + Neon + Supabase)
 
 ---
 
@@ -116,7 +141,7 @@ Defaults (local development only — never used in production):
 - PostgreSQL: database `dfs`, user `dfs`, password `dfs`
 - MinIO: user `minioadmin`, password `minioadmin`
 
-### 3. Run the application
+### 3. Run the backend
 
 ```bash
 mvn spring-boot:run
@@ -132,9 +157,13 @@ curl http://localhost:8080/api/health
 
 Expected: `{"status":"UP","components":{"database":"UP"}}`
 
+### 5. Open the frontend
+
+Open `frontend/index.html` in your browser. (It points at the deployed API by default; edit the `API` constant at the top of the file to use `http://localhost:8080` for local development.)
+
 ---
 
-## Full walkthrough — register, upload, download, delete
+## Full walkthrough — register, upload, download, delete (via API)
 
 ```bash
 # 1. Register (returns a JWT)
@@ -202,7 +231,17 @@ Integration tests are tagged `integration` and run separately from the fast unit
 
 ## Architecture
 
-Modular monolith — one deployable, split internally by feature package (`auth`, `health`, `file`, `config`, `common`, `user`). Distribution lives in the storage layer, not in splitting the application into microservices.
+The backend is a **modular monolith** — one deployable, split internally by feature package (`auth`, `health`, `file`, `config`, `common`, `user`). Distribution lives in the storage layer, not in splitting the application into microservices.
+
+**Full-stack flow:**
+React frontend (Vercel)
+│ HTTPS + JWT
+▼
+Spring Boot API (Render)
+│
+├──► StorageService (S3-compatible) → file BYTES → Supabase
+│
+└──► FileMetadataRepository → METADATA → PostgreSQL (Neon)
 
 **How a file is stored:**
 Upload request (+ JWT)
@@ -239,6 +278,7 @@ All environment-specific settings are supplied via environment variables (with s
 | `JWT_SECRET` | Signing key for JWTs (long random value in production) |
 | `STORAGE_ENABLED` | Toggles the object-storage backend |
 | `MINIO_ENDPOINT` / `MINIO_USER` / `MINIO_PASSWORD` / `MINIO_BUCKET` / `MINIO_REGION` | S3-compatible storage connection |
+| `CORS_ALLOWED_ORIGINS` | Allowed frontend origins (comma-separated) |
 | `PORT` | Server port (set automatically by the host) |
 
 ---
@@ -248,14 +288,8 @@ All environment-specific settings are supplied via environment variables (with s
 - [x] **Phase 1** — Foundation (health, config, error handling, logging, Docker)
 - [x] **Phase 2** — Authentication (register, login, JWT, route protection)
 - [x] **Phase 3** — File upload / list / download / delete with S3-compatible storage + SHA-256
-- [x] **Deployment** — Live on Render + Neon + Supabase
-- [ ] **Phase 4** — Content deduplication (skip storing identical files twice)
-- [ ] **Phase 5** — Multi-node storage registry and health checks
-- [ ] **Phase 6** — File replication across nodes
-- [ ] **Phase 7** — Asynchronous replication (message queue)
-- [ ] **Phase 8** — Failure detection and download failover
-- [ ] **Phase 9** — Automatic re-replication (self-healing)
-- [ ] **Phase 10** — CI/CD, load testing, full documentation
+- [x] **Frontend** — React web app (login, upload, list, download, delete)
+- [x] **Deployment** — Live full stack (Vercel + Render + Neon + Supabase)
+
 
 ---
-

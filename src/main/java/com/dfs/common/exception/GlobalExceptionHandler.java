@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.Instant;
@@ -62,5 +63,13 @@ public class GlobalExceptionHandler {
                 MDC.get(CorrelationIdFilter.MDC_KEY),
                 fieldErrors);
         return ResponseEntity.status(status).body(body);
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ErrorResponse> handleMaxUploadSize(
+            MaxUploadSizeExceededException ex, HttpServletRequest request) {
+        log.warn("Upload rejected: file too large for {}", request.getRequestURI());
+        return build(HttpStatus.PAYLOAD_TOO_LARGE,
+                "File exceeds the maximum allowed size (10MB)", request, List.of());
     }
 }
