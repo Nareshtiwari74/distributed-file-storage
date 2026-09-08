@@ -15,12 +15,17 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.security.MessageDigest;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Orchestrates file operations: checksum, store/retrieve/delete bytes in MinIO
- * via {@link StorageService}, and persist metadata in PostgreSQL. Every file is
- * owned by the user resolved from the JWT; users can only touch their own files.
+ * Orchestrates file operations with content deduplication.
+ *
+ * <p>On upload, the file's SHA-256 checksum is looked up: if identical content
+ * already exists (a {@link StoredObject}), the new file references it and the
+ * reference count is incremented — the bytes are NOT stored again. On delete,
+ * the reference count is decremented, and the bytes are removed only when the
+ * count reaches zero (no file references them anymore).
  */
 @Service
 public class FileService {
@@ -28,13 +33,16 @@ public class FileService {
     private static final Logger log = LoggerFactory.getLogger(FileService.class);
 
     private final FileMetadataRepository fileRepository;
+    private final StoredObjectRepository storedObjectRepository;
     private final UserRepository userRepository;
     private final StorageService storageService;
 
     public FileService(FileMetadataRepository fileRepository,
+                       StoredObjectRepository storedObjectRepository,
                        UserRepository userRepository,
                        StorageService storageService) {
         this.fileRepository = fileRepository;
+        this.storedObjectRepository = storedObjectRepository;
         this.userRepository = userRepository;
         this.storageService = storageService;
     }
@@ -47,21 +55,38 @@ public class FileService {
 
         User owner = resolveUser(ownerEmail);
         String checksum = sha256(file);
-        String objectKey = owner.getId() + "/" + UUID.randomUUID() + "-" + file.getOriginalFilename();
 
-        try (InputStream in = file.getInputStream()) {
-            storageService.store(objectKey, in, file.getSize(),
-                    contentTypeOf(file));
-        } catch (IOException e) {
-            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to read upload: " + e.getMessage());
+        // Deduplication: does identical content already exist?
+        Optional<StoredObject> existing = storedObjectRepository.findByChecksum(checksum);
+
+        StoredObject storedObject;
+        if (existing.isPresent()) {
+            // Content already stored — reference it, skip the byte upload.
+            storedObject = existing.get();
+            storedObject.incrementReferenceCount();
+            storedObjectRepository.save(storedObject);
+            log.info("Deduplicated upload: checksum={} now referenced {} time(s)",
+                    checksum, storedObject.getReferenceCount());
+        } else {
+            // New content — upload the bytes and create a stored object.
+            String objectKey = owner.getId() + "/" + UUID.randomUUID() + "-" + file.getOriginalFilename();
+            try (InputStream in = file.getInputStream()) {
+                storageService.store(objectKey, in, file.getSize(), contentTypeOf(file));
+            } catch (IOException e) {
+                throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR,
+                        "Failed to read upload: " + e.getMessage());
+            }
+            storedObject = storedObjectRepository.save(
+                    new StoredObject(checksum, objectKey, file.getSize()));
+            log.info("Stored new content: checksum={} objectKey={}", checksum, objectKey);
         }
 
         FileMetadata saved = fileRepository.save(new FileMetadata(
-                owner, file.getOriginalFilename(), file.getSize(),
-                contentTypeOf(file), checksum, objectKey));
+                owner, storedObject, file.getOriginalFilename(),
+                file.getSize(), contentTypeOf(file)));
 
-        log.info("Stored file id={} name={} size={} owner={}",
-                saved.getId(), saved.getFilename(), saved.getSize(), owner.getEmail());
+        log.info("File record created id={} name={} owner={}",
+                saved.getId(), saved.getFilename(), owner.getEmail());
         return FileResponse.from(saved);
     }
 
@@ -72,7 +97,6 @@ public class FileService {
                 .stream().map(FileResponse::from).toList();
     }
 
-    /** Returns the metadata (with owner check) for a download. */
     @Transactional(readOnly = true)
     public FileMetadata getOwnedFile(String ownerEmail, Long fileId) {
         User owner = resolveUser(ownerEmail);
@@ -80,18 +104,33 @@ public class FileService {
                 .orElseThrow(() -> new FileNotFoundException(fileId));
     }
 
-    /** Streams the bytes for a file the user owns. */
     @Transactional(readOnly = true)
     public InputStream download(String ownerEmail, Long fileId) {
         FileMetadata meta = getOwnedFile(ownerEmail, fileId);
-        return storageService.retrieve(meta.getObjectKey());
+        return storageService.retrieve(meta.getStoredObject().getObjectKey());
     }
 
     @Transactional
     public void delete(String ownerEmail, Long fileId) {
         FileMetadata meta = getOwnedFile(ownerEmail, fileId);
-        storageService.delete(meta.getObjectKey());
+        StoredObject storedObject = meta.getStoredObject();
+
+        // Remove the file record first.
         fileRepository.delete(meta);
+
+        // Reference counting: only delete the bytes when nothing references them.
+        storedObject.decrementReferenceCount();
+        if (storedObject.getReferenceCount() <= 0) {
+            storageService.delete(storedObject.getObjectKey());
+            storedObjectRepository.delete(storedObject);
+            log.info("Deleted content: checksum={} (no more references)",
+                    storedObject.getChecksum());
+        } else {
+            storedObjectRepository.save(storedObject);
+            log.info("Kept content: checksum={} still referenced {} time(s)",
+                    storedObject.getChecksum(), storedObject.getReferenceCount());
+        }
+
         log.info("Deleted file id={} owner={}", fileId, ownerEmail);
     }
 
@@ -114,7 +153,8 @@ public class FileService {
             }
             return sb.toString();
         } catch (Exception e) {
-            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to checksum file: " + e.getMessage());
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Failed to checksum file: " + e.getMessage());
         }
     }
 }

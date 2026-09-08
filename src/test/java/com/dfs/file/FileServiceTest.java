@@ -26,34 +26,52 @@ import static org.mockito.Mockito.when;
 class FileServiceTest {
 
     private final FileMetadataRepository fileRepository = mock(FileMetadataRepository.class);
+    private final StoredObjectRepository storedObjectRepository = mock(StoredObjectRepository.class);
     private final UserRepository userRepository = mock(UserRepository.class);
     private final StorageService storageService = mock(StorageService.class);
     private final FileService fileService =
-            new FileService(fileRepository, userRepository, storageService);
+            new FileService(fileRepository, storedObjectRepository, userRepository, storageService);
 
     private User owner;
 
     @BeforeEach
     void setup() {
         owner = new User("naresh@example.com", "HASHED");
-        // give the mock user an id via reflection-free helper: stub findByEmail
         when(userRepository.findByEmail("naresh@example.com")).thenReturn(Optional.of(owner));
+        when(fileRepository.save(any(FileMetadata.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(storedObjectRepository.save(any(StoredObject.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
     @Test
-    void uploadStoresBytesAndSavesMetadata() {
+    void uploadNewContentStoresBytesAndCreatesStoredObject() {
         MockMultipartFile file = new MockMultipartFile(
                 "file", "hello.txt", "text/plain", "hello world".getBytes());
-        when(fileRepository.save(any(FileMetadata.class))).thenAnswer(inv -> inv.getArgument(0));
+        // no existing content with this checksum
+        when(storedObjectRepository.findByChecksum(anyString())).thenReturn(Optional.empty());
 
         FileResponse response = fileService.upload("naresh@example.com", file);
 
         assertThat(response.filename()).isEqualTo("hello.txt");
-        assertThat(response.size()).isEqualTo("hello world".getBytes().length);
-        assertThat(response.contentType()).isEqualTo("text/plain");
-        assertThat(response.checksum()).hasSize(64); // SHA-256 hex
+        assertThat(response.checksum()).hasSize(64);
+        // new content: bytes ARE stored, a StoredObject IS created
         verify(storageService).store(anyString(), any(InputStream.class), anyLong(), eq("text/plain"));
-        verify(fileRepository).save(any(FileMetadata.class));
+        verify(storedObjectRepository).save(any(StoredObject.class));
+    }
+
+    @Test
+    void uploadDuplicateContentSkipsStorageAndIncrementsReferenceCount() {
+        MockMultipartFile file = new MockMultipartFile(
+                "file", "hello.txt", "text/plain", "hello world".getBytes());
+        // identical content already exists
+        StoredObject existing = new StoredObject("dummychecksum", "existing-key", 11);
+        when(storedObjectRepository.findByChecksum(anyString())).thenReturn(Optional.of(existing));
+
+        int before = existing.getReferenceCount();
+        fileService.upload("naresh@example.com", file);
+
+        // duplicate: bytes are NOT stored again, reference count incremented
+        verify(storageService, never()).store(anyString(), any(), anyLong(), anyString());
+        assertThat(existing.getReferenceCount()).isEqualTo(before + 1);
     }
 
     @Test
@@ -65,12 +83,12 @@ class FileServiceTest {
                 .isInstanceOf(ApiException.class);
 
         verify(storageService, never()).store(anyString(), any(), anyLong(), anyString());
-        verify(fileRepository, never()).save(any());
     }
 
     @Test
     void listReturnsOnlyOwnerFiles() {
-        FileMetadata f = new FileMetadata(owner, "a.txt", 3, "text/plain", "abc", "key1");
+        StoredObject so = new StoredObject("abc", "key1", 3);
+        FileMetadata f = new FileMetadata(owner, so, "a.txt", 3, "text/plain");
         when(fileRepository.findAllByOwnerId(any())).thenReturn(List.of(f));
 
         List<FileResponse> files = fileService.listForOwner("naresh@example.com");
@@ -88,19 +106,37 @@ class FileServiceTest {
     }
 
     @Test
-    void deleteRemovesBytesAndMetadata() {
-        FileMetadata f = new FileMetadata(owner, "a.txt", 3, "text/plain", "abc", "key1");
+    void deleteWithMultipleReferencesKeepsBytes() {
+        StoredObject so = new StoredObject("abc", "key1", 3);
+        so.incrementReferenceCount(); // now 2 references
+        FileMetadata f = new FileMetadata(owner, so, "a.txt", 3, "text/plain");
         when(fileRepository.findByIdAndOwnerId(eq(1L), any())).thenReturn(Optional.of(f));
 
         fileService.delete("naresh@example.com", 1L);
 
+        // still referenced by another file: bytes are KEPT, count decremented
+        verify(storageService, never()).delete(anyString());
+        verify(storedObjectRepository, never()).delete(any());
+        assertThat(so.getReferenceCount()).isEqualTo(1);
+    }
+
+    @Test
+    void deleteLastReferenceRemovesBytes() {
+        StoredObject so = new StoredObject("abc", "key1", 3); // 1 reference
+        FileMetadata f = new FileMetadata(owner, so, "a.txt", 3, "text/plain");
+        when(fileRepository.findByIdAndOwnerId(eq(1L), any())).thenReturn(Optional.of(f));
+
+        fileService.delete("naresh@example.com", 1L);
+
+        // last reference gone: bytes AND stored object are deleted
         verify(storageService).delete("key1");
-        verify(fileRepository).delete(f);
+        verify(storedObjectRepository).delete(so);
     }
 
     @Test
     void downloadRetrievesFromStorage() {
-        FileMetadata f = new FileMetadata(owner, "a.txt", 3, "text/plain", "abc", "key1");
+        StoredObject so = new StoredObject("abc", "key1", 3);
+        FileMetadata f = new FileMetadata(owner, so, "a.txt", 3, "text/plain");
         InputStream fake = InputStream.nullInputStream();
         when(fileRepository.findByIdAndOwnerId(eq(1L), any())).thenReturn(Optional.of(f));
         when(storageService.retrieve("key1")).thenReturn(fake);

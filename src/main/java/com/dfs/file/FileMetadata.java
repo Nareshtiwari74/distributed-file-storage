@@ -16,9 +16,10 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 
 /**
- * Metadata about an uploaded file. The actual bytes live in MinIO,
- * referenced by {@link #objectKey}. This entity is never returned
- * directly over the API — controllers use DTOs.
+ * Metadata about an uploaded file. Per-file details (filename, content type)
+ * live here; the actual content — bytes, checksum, storage key — lives in the
+ * linked {@link StoredObject}, which may be shared by multiple files
+ * (deduplication). Never returned directly over the API; controllers use DTOs.
  */
 @Entity
 @Table(name = "files")
@@ -32,6 +33,10 @@ public class FileMetadata {
     @JoinColumn(name = "owner_id", nullable = false)
     private User owner;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "stored_object_id", nullable = false)
+    private StoredObject storedObject;
+
     @Column(nullable = false)
     private String filename;
 
@@ -41,10 +46,12 @@ public class FileMetadata {
     @Column(name = "content_type", nullable = false)
     private String contentType;
 
+    // Retained for backward compatibility with existing rows; content-level
+    // checksum/objectKey are now authoritative on StoredObject.
     @Column(nullable = false, length = 64)
     private String checksum;
 
-    @Column(name = "object_key", nullable = false, unique = true)
+    @Column(name = "object_key", nullable = false)
     private String objectKey;
 
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -56,14 +63,16 @@ public class FileMetadata {
     protected FileMetadata() {
     }
 
-    public FileMetadata(User owner, String filename, long size,
-                        String contentType, String checksum, String objectKey) {
+    public FileMetadata(User owner, StoredObject storedObject, String filename,
+                        long size, String contentType) {
         this.owner = owner;
+        this.storedObject = storedObject;
         this.filename = filename;
         this.size = size;
         this.contentType = contentType;
-        this.checksum = checksum;
-        this.objectKey = objectKey;
+        // mirror content fields for the retained columns
+        this.checksum = storedObject.getChecksum();
+        this.objectKey = storedObject.getObjectKey();
     }
 
     @PrePersist
@@ -80,6 +89,7 @@ public class FileMetadata {
 
     public Long getId() { return id; }
     public User getOwner() { return owner; }
+    public StoredObject getStoredObject() { return storedObject; }
     public String getFilename() { return filename; }
     public long getSize() { return size; }
     public String getContentType() { return contentType; }
