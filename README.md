@@ -1,4 +1,5 @@
 # Distributed File Storage System
+[![Project Preview](https://drive.google.com/uc?export=view&id=1TnQJpoHmLHzpproMB3W1GAfoDpro3oEE)](https://drive.google.com/file/d/1TnQJpoHmLHzpproMB3W1GAfoDpro3oEE/view?usp=sharing)
 
 A full-stack, fault-tolerant file storage application built with **Spring Boot** and **Java 21**, with a **React** frontend — a small, understandable take on what systems like Amazon S3 or Google Drive do under the hood: store files reliably so that no single machine failure loses data or makes it unavailable.
 
