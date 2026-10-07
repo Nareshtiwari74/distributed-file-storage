@@ -11,11 +11,11 @@ File **contents** are stored in S3-compatible object storage (MinIO locally, Sup
 
 ## 🔗 Live Demo
 
-**Web app (frontend):** https://distributed-file-storage-two.vercel.app
-**API:** https://distributed-file-storage-b26g.onrender.com
+**Web app (frontend):** https://storage.nareshdev.space
+**API:** https://api1.nareshdev.space
 
-- Health: [/api/health](https://distributed-file-storage-b26g.onrender.com/api/health)
-- API docs (Swagger): [/swagger-ui.html](https://distributed-file-storage-b26g.onrender.com/swagger-ui.html)
+- Health: [/api/health](https://api1.nareshdev.space/api/health)
+- API docs (Swagger): [/swagger-ui.html](https://api1.nareshdev.space/swagger-ui.html)
 
 Fully deployed and functional — register/login (JWT) and file upload, list, download, and delete, all live through the web app or the API directly. Files are stored in cloud object storage.
 
